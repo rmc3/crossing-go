@@ -24,38 +24,47 @@ var putCmd = &cobra.Command{
 	Long: `Using Client Side Encryption (CSE), encrypt and upload
 a file to S3.`,
 	Args: func(cmd *cobra.Command, args []string) error {
-		if err := cobra.ExactArgs(2)(cmd, args); err != nil {
+		if err := cobra.MinimumNArgs(2)(cmd, args); err != nil {
 			return err
 		}
-		_, _, err := parseS3Url(args[1])
+		lastArg := args[len(args)-1]
+		_, _, err := parseS3Url(lastArg)
 		if err != nil {
-			return fmt.Errorf("invalid S3 URL: %s", args[1])
+			return fmt.Errorf("invalid S3 URL: %s", lastArg)
 		}
 		return nil
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		sourceFile := args[0]
-		s3bucket, s3object, err := parseS3Url(args[1])
-
+		sourceFiles := args[:len(args)-1]
+		s3bucket, s3object, err := parseS3Url(args[len(args)-1])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s", err)
 			os.Exit(1)
 		}
-		// If destination is "" or /
-		// assume passed bare bucket and generate key
-		// from source filename
-		if s3object == "" || s3object == "/" {
-			s3object = sourceFile
-		}
-		// If object key ends with /, assume key is a
-		// key prefix and append on the source file
-		if s3object[len(s3object)-1:] == "/" {
-			s3object = s3object + sourceFile
-		}
-		err = putS3Cse(s3bucket, s3object, viper.GetString("kmskeyid"), sourceFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "err uploading file: %s\n", err)
-			os.Exit(1)
+
+		for _, sourceFile := range sourceFiles {
+			// If destination is "" or /
+			// assume passed bare bucket and generate key
+			// from source filename
+			if s3object == "" || s3object == "/" {
+				s3object = sourceFile
+			// If object key ends with /, assume key is a
+			// key prefix and append on the source file
+			} else if s3object[len(s3object)-1:] == "/" {
+				s3object = s3object + sourceFile
+			// If the object key is set and is not empty or ending in /
+			// and more than one source file is provided, we can't
+			// be sure which object the user is intending for us to write to
+			// and should throw an error.
+			} else if len(sourceFiles) > 1 {
+				fmt.Fprintf(os.Stderr, "Refusing to upload multiple objects to key %s\n", s3object)
+				os.Exit(1)
+			}
+			err = putS3Cse(s3bucket, s3object, viper.GetString("kmskeyid"), sourceFile)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "err uploading file: %s\n", err)
+				os.Exit(1)
+			}
 		}
 	},
 }
